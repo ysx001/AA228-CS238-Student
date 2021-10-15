@@ -1,5 +1,5 @@
 import sys
-
+import time
 import pandas as pd
 import networkx as nx
 import numpy as np
@@ -65,6 +65,8 @@ def write_gph(dag, idx2names, filename):
         for edge in dag.edges():
             f.write("{}, {}\n".format(idx2names[edge[0]], idx2names[edge[1]]))
 
+def read_gph(graph_file):
+    G = nx.read_edgelist(graph_file, create_using=nx.DiGraph)
 
 def compute(infile, outfile, method="local", n_iter=10):
     # WRITE YOUR CODE HERE
@@ -72,29 +74,39 @@ def compute(infile, outfile, method="local", n_iter=10):
     # THIS INCLUDES CHANGING THE FUNCTION NAMES, MAKING THE CODE MODULAR, BASICALLY ANYTHING
     D = pd.read_csv(infile)
     vars = [Variable(name, D.max()[name]) for name in D.columns]
+    idx2names = {i: vars[i].name for i in range(len(vars))}
 
     G = nx.DiGraph()
     G.add_nodes_from(range(len(vars)))
-    best_score, best_G = -np.inf, G
-    ordering = np.arange(len(vars))
-    for i in range(n_iter):
-        new_ordering = np.copy(ordering)
-        np.random.shuffle(new_ordering)
-        if method == 'k2':
+    total_time = 0
+    if method == 'k2':
+        best_score, best_G = -np.inf, G
+        ordering = np.arange(len(vars))
+        for i in range(n_iter):
+            print(i)
+            new_ordering = np.copy(ordering)
+            np.random.shuffle(new_ordering)
             k2_search = K2Search(ordering=new_ordering)
+            start = time.time()
             G = k2_search.fit(vars, D)
-        elif method == 'local':
-            local_search = LocalDirectedGraphSearch(k_max=10)
-            G = local_search.fit(vars, D)
-
-        if not has_cycle(G):
-            score = bayesian_score(vars, G, D)
-            if score > best_score:
-                best_score, best_G = score, G
-            print(f"iter {i} score {score} best_score {best_score}")
-
-    print(best_score)
-    idx2names = {i: vars[i].name for i in range(len(vars))}
+            time_took = time.time() - start
+            total_time += time_took
+            if not has_cycle(G):
+                score = bayesian_score(vars, G, D)
+                if score > best_score:
+                    best_score, best_G = score, G
+                    write_gph(best_G, idx2names, f"{outfile}_{int(best_score)}.gph")
+                print(f"iter {i} score {score} best_score {best_score} took {time_took}s")
+    elif method == 'local':
+        local_search = LocalDirectedGraphSearch(k_max=n_iter)
+        start = time.time()
+        best_G = local_search.fit(vars, D)
+        total_time = time.time() - start
+    
+    print(f"total for calculating structure {total_time}s")
+    if not has_cycle(best_G):
+        score = bayesian_score(vars, G, D)
+        print(f"best score: {score}")
     write_gph(best_G, idx2names, outfile)
 
 def has_cycle(G):
