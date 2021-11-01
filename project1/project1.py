@@ -1,10 +1,14 @@
+import os
 import sys
+import csv
 import time
 import pandas as pd
 import networkx as nx
 import numpy as np
 from scipy.special import loggamma
-
+# get rid of warnings 
+import warnings
+warnings.filterwarnings("ignore")
 class Variable():
     def __init__(self, name, r_i):
         self.name = name
@@ -35,9 +39,10 @@ class K2Search():
         return G
 
 class LocalDirectedGraphSearch():
-    def __init__(self, k_max):
+    def __init__(self, k_max, init_G):
         self.k_max = k_max
-    
+        self.init_G = init_G
+
     def rand_graph_neighbor(self, G):
         n = len(G)
         i = np.random.randint(low=0, high=n)
@@ -50,14 +55,21 @@ class LocalDirectedGraphSearch():
         return G_prime
     
     def fit(self, vars, D):
-        G =  nx.DiGraph() # initial graph
-        G.add_nodes_from(range(len(vars)))
+        if self.init_G is None:
+            G = nx.DiGraph() # initial graph
+            G.add_nodes_from(range(len(vars)))
+        else:
+            G = self.init_G
         y = bayesian_score(vars, G, D)
+        print(f"initial score {y}")
         for k in range(self.k_max):
+            start = time.time()
             G_prime = self.rand_graph_neighbor(G)
             y_prime = -np.inf if has_cycle(G_prime) else bayesian_score(vars, G_prime, D)
+            print(f"time {time.time() - start}")
             if y_prime > y:
                 y, G = y_prime, G_prime
+                print(f"best! score {y}")
         return G
 
 def write_gph(dag, idx2names, filename):
@@ -65,8 +77,17 @@ def write_gph(dag, idx2names, filename):
         for edge in dag.edges():
             f.write("{}, {}\n".format(idx2names[edge[0]], idx2names[edge[1]]))
 
-def read_gph(graph_file):
-    G = nx.read_edgelist(graph_file, create_using=nx.DiGraph)
+def read_gph(graph_file, D):
+    if os.path.exists(graph_file):
+        names2idx = {D.columns[i]: i for i in range(len(D.columns))}
+        G = nx.DiGraph()
+        with open(graph_file, 'r') as f:
+            edges = csv.reader(f, delimiter=",")
+            for edge in edges:
+                i, j = names2idx[edge[0]], names2idx[edge[1].strip()]
+                G.add_edge(i, j)
+        return G
+    return None
 
 def compute(infile, outfile, method="local", n_iter=10):
     # WRITE YOUR CODE HERE
@@ -83,7 +104,6 @@ def compute(infile, outfile, method="local", n_iter=10):
         best_score, best_G = -np.inf, G
         ordering = np.arange(len(vars))
         for i in range(n_iter):
-            print(i)
             new_ordering = np.copy(ordering)
             np.random.shuffle(new_ordering)
             k2_search = K2Search(ordering=new_ordering)
@@ -98,16 +118,17 @@ def compute(infile, outfile, method="local", n_iter=10):
                     write_gph(best_G, idx2names, f"{outfile}_{int(best_score)}.gph")
                 print(f"iter {i} score {score} best_score {best_score} took {time_took}s")
     elif method == 'local':
-        local_search = LocalDirectedGraphSearch(k_max=n_iter)
+        local_search = LocalDirectedGraphSearch(k_max=n_iter,
+                                                init_G=read_gph(f"{outfile}.gph", D))
         start = time.time()
         best_G = local_search.fit(vars, D)
         total_time = time.time() - start
     
     print(f"total for calculating structure {total_time}s")
     if not has_cycle(best_G):
-        score = bayesian_score(vars, G, D)
+        score = bayesian_score(vars, best_G, D)
         print(f"best score: {score}")
-    write_gph(best_G, idx2names, outfile)
+    write_gph(best_G, idx2names, f"{outfile}_{int(score)}.gph")
 
 def has_cycle(G):
     # nx.find_cycle will throw exception if cycle is found
